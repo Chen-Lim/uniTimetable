@@ -6,7 +6,7 @@ import pytz
 import re
 from uuid import uuid4
 
-# 配置参数
+
 SKIP_ROWS = 2  # 跳过前两行（空行和表头）| usyd导出的xls文件默认从第三行开始
 TIMEZONE = pytz.timezone("Australia/Sydney")
 COLUMNS = [
@@ -34,11 +34,7 @@ def standardize_address(address):
     """标准化地址"""
     parts = address.split('.')
     if len(parts) > 3:
-        """防止因ABS Building改名影响地图定位"""
-        if parts[3] == "Belinda Hutchinson Building":
-            return "Abercrombie Building\, Sydney"
-        else:
-            return parts[3] + "\, Sydney"
+        return parts[3] + ", Sydney"
     else:
         return None
 
@@ -69,12 +65,11 @@ def create_ics_event(subject_code, group, start, end, description, until, locati
         event.insert(3, f"LOCATION:{location}")
 
     event.append("END:VEVENT")
-    return '\n'.join(event) + '\n'  # 确保每行有换行符
+    return '\n'.join(event) + '\n'
 
 
 # ---------- 核心处理逻辑 ----------
 def generate_ics_from_excel(excel_path, ics_path, year):
-    """处理单个Excel文件"""
     try:
         df = pd.read_excel(
             excel_path,
@@ -123,37 +118,58 @@ def generate_ics_from_excel(excel_path, ics_path, year):
             if classroom:
                 description = f"{description} \\n{classroom}"
 
-            # 处理日期范围
+            # 处理日期范围和单日
             for date_range in row["Dates"].split(","):
                 date_range = date_range.strip()
-                if "-" not in date_range:
-                    continue
+                if "-" in date_range:
+                    start_str, end_str = date_range.split("-")
+                    start_date = parse_date(start_str.strip(), year)
+                    end_date = parse_date(end_str.strip(), year)
 
-                start_str, end_str = date_range.split("-")
-                start_date = parse_date(start_str.strip(), year)
-                end_date = parse_date(end_str.strip(), year)
-
-                # 生成事件时间
-                event_start = TIMEZONE.localize(
-                    datetime.combine(start_date.date(), start_time)
-                )
-                event_end = event_start + timedelta(minutes=duration)
-                until = TIMEZONE.localize(
-                    datetime.combine(end_date.date(), start_time)
-                )
-
-                # 添加到ICS内容
-                ics_content.append(
-                    create_ics_event(
-                        subject_code=subject_code,
-                        group=group,
-                        start=event_start,
-                        end=event_end,
-                        description=description,
-                        until=until,
-                        location=location  # 传递标准化后的地址
+                    # 生成事件时间
+                    event_start = TIMEZONE.localize(
+                        datetime.combine(start_date.date(), start_time)
                     )
-                )
+                    event_end = event_start + timedelta(minutes=duration)
+                    until = TIMEZONE.localize(
+                        datetime.combine(end_date.date(), start_time)
+                    )
+
+                    # 添加重复事件
+                    ics_content.append(
+                        create_ics_event(
+                            subject_code=subject_code,
+                            group=group,
+                            start=event_start,
+                            end=event_end,
+                            description=description,
+                            until=until,
+                            location=location
+                        )
+                    )
+                elif re.match(r"^\d{1,2}/\d{1,2}$", date_range):
+                    single_date = parse_date(date_range.strip(), year)
+                    event_start = TIMEZONE.localize(
+                        datetime.combine(single_date.date(), start_time)
+                    )
+                    event_end = event_start + timedelta(minutes=duration)
+
+                    # 添加单次事件（无 RRULE）
+                    event = [
+                        "BEGIN:VEVENT",
+                        f"UID:{uuid4()}@uni.sydney.edu.au",
+                        f"DESCRIPTION:{description}",
+                        f"DTSTART;TZID=Australia/Sydney:{event_start.strftime('%Y%m%dT%H%M%S')}",
+                        f"DTEND;TZID=Australia/Sydney:{event_end.strftime('%Y%m%dT%H%M%S')}",
+                        f"SUMMARY:{subject_code}-{group}",
+                        "TRANSP:OPAQUE"
+                    ]
+                    if location:
+                        event.insert(3, f"LOCATION:{location}")
+                    event.append("END:VEVENT")
+                    ics_content.append('\n'.join(event) + '\n')
+                else:
+                    continue
 
         except Exception as e:
             print(f"文件 {os.path.basename(excel_path)} 第{idx + SKIP_ROWS + 1}行错误: {str(e)}")
@@ -166,7 +182,6 @@ def generate_ics_from_excel(excel_path, ics_path, year):
     return True
 
 
-# ---------- 主程序 ----------
 def main():
     year = datetime.now().year
 
