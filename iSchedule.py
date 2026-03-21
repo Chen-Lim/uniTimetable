@@ -6,7 +6,7 @@ import pytz
 import re
 from uuid import uuid4
 
-
+# 配置参数
 SKIP_ROWS = 2  # 跳过前两行（空行和表头）| usyd导出的xls文件默认从第三行开始
 TIMEZONE = pytz.timezone("Australia/Sydney")
 COLUMNS = [
@@ -65,11 +65,12 @@ def create_ics_event(subject_code, group, start, end, description, until, locati
         event.insert(3, f"LOCATION:{location}")
 
     event.append("END:VEVENT")
-    return '\n'.join(event) + '\n'
+    return '\n'.join(event) + '\n'  # 确保每行有换行符
 
 
 # ---------- 核心处理逻辑 ----------
 def generate_ics_from_excel(excel_path, ics_path, year):
+    """处理单个Excel文件"""
     try:
         df = pd.read_excel(
             excel_path,
@@ -182,6 +183,7 @@ def generate_ics_from_excel(excel_path, ics_path, year):
     return True
 
 
+# ---------- 主程序 ----------
 def main():
     year = datetime.now().year
 
