@@ -193,7 +193,7 @@ mod tests {
             location: Some("Belinda Hutchinson Building, Sydney".to_string()),
             dtstart: "20260226T170000".to_string(),
             dtend: "20260226T200000".to_string(),
-            rrule_until: Some("20260528T170000".to_string()),
+            rrule_until: Some("20260528T070000Z".to_string()),
             byday: Some("TH".to_string()),
         }];
 
@@ -215,7 +215,7 @@ mod tests {
         assert!(ics.contains("VERSION:2.0\r\n"));
         assert!(ics.contains("BEGIN:VTIMEZONE\r\n"));
         assert!(ics.contains("BEGIN:VEVENT\r\n"));
-        assert!(ics.contains("RRULE:FREQ=WEEKLY;BYDAY=TH;UNTIL=20260528T170000\r\n"));
+        assert!(ics.contains("RRULE:FREQ=WEEKLY;BYDAY=TH;UNTIL=20260528T070000Z\r\n"));
         assert!(ics.contains("SUMMARY:COMP9208-Lecture\r\n"));
         assert!(ics.contains("END:VEVENT\r\n"));
         assert!(ics.contains("END:VCALENDAR\r\n"));

@@ -9,7 +9,8 @@
 
 use std::collections::HashMap;
 use anyhow::{Result, Context};
-use chrono::{NaiveDateTime, Duration, Datelike, Weekday};
+use chrono::{NaiveDateTime, Duration, Datelike, Weekday, TimeZone, Utc};
+use chrono_tz::Australia::Sydney;
 use regex::Regex;
 use uuid::Uuid;
 
@@ -94,6 +95,15 @@ fn parse_dt(dt_str: &str) -> Result<NaiveDateTime> {
 
 fn format_dt(dt: &NaiveDateTime) -> String {
     dt.format("%Y%m%dT%H%M%S").to_string()
+}
+
+/// Convert a Sydney local NaiveDateTime to UTC and format with trailing `Z`
+/// as required by RFC 5545 §3.3.10 when DTSTART uses TZID.
+fn format_until_utc(dt: &NaiveDateTime) -> String {
+    match Sydney.from_local_datetime(dt).earliest() {
+        Some(local_dt) => local_dt.with_timezone(&Utc).format("%Y%m%dT%H%M%SZ").to_string(),
+        None => format!("{}Z", format_dt(dt)),
+    }
 }
 
 fn weekday_abbr(wd: Weekday) -> &'static str {
@@ -251,7 +261,7 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
 
             // Only emit RRULE when there are multiple occurrences in the segment
             let (rrule_until, byday_field) = if count > 1 {
-                (Some(format_dt(&seg_until_dt)), Some(byday))
+                (Some(format_until_utc(&seg_until_dt)), Some(byday))
             } else {
                 (None, None)
             };
@@ -387,5 +397,18 @@ mod tests {
         assert!(out[1].rrule_until.is_some());
         assert_eq!(out[0].dtstart, "20260305T100000");
         assert_eq!(out[1].dtstart, "20260326T100000");
+        assert_eq!(out[0].rrule_until.as_deref(), Some("20260311T230000Z"));
+        assert_eq!(out[1].rrule_until.as_deref(), Some("20260401T230000Z"));
+    }
+
+    #[test]
+    fn test_until_utc_aedt_and_aest() {
+        // AEDT (UTC+11) in March
+        let aedt = parse_dt("20260312T100000").unwrap();
+        assert_eq!(format_until_utc(&aedt), "20260311T230000Z");
+
+        // AEST (UTC+10) in May
+        let aest = parse_dt("20260528T170000").unwrap();
+        assert_eq!(format_until_utc(&aest), "20260528T070000Z");
     }
 }
