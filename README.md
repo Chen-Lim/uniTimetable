@@ -1,8 +1,10 @@
-# uniTimetable — Rust Rewrite
+# uniTimetable
 
 > English version below.
 
-📅 **这个版本是对原 Python 版本的 Rust 重写。不再需要导出 Excel 文件——只需提供你的 USyd iCal 订阅链接，程序会自动下载原始日历、解析并重构为干净的 ICS 文件，方便导入任意日历应用。**
+📅 **只需提供你的 USyd iCal 订阅链接，程序会自动下载原始日历、解析并重构为干净的 ICS 文件，方便导入任意日历应用（不再需要手动导出 Excel）。**
+
+> 原先基于 Excel 的 Python 版本已归档至 [`legacy-python`](https://github.com/Chen-Lim/uniTimetable/tree/legacy-python) 分支。
 
 ## 功能特性
 
@@ -23,9 +25,8 @@
 
 ### 编译
 ```bash
-git clone https://github.com/your-repo/uniTimetable.git
+git clone https://github.com/Chen-Lim/uniTimetable.git
 cd uniTimetable
-git checkout rust-rewrite
 cargo build --release
 ```
 
@@ -71,7 +72,9 @@ src/
 
 > English version here.
 
-📅 This is a Rust rewrite of the original Python version. No Excel export needed — just provide your USyd iCal subscription URL, and the tool will automatically download, parse, and restructure your timetable into a clean ICS file ready to import into any calendar app.
+📅 Just provide your USyd iCal subscription URL, and the tool will automatically download, parse, and restructure your timetable into a clean ICS file ready to import into any calendar app (no Excel export needed).
+
+> The original Excel-based Python version is archived on the [`legacy-python`](https://github.com/Chen-Lim/uniTimetable/tree/legacy-python) branch.
 
 ## Features
 
@@ -92,9 +95,8 @@ src/
 
 ### Build
 ```bash
-git clone https://github.com/your-repo/uniTimetable.git
+git clone https://github.com/Chen-Lim/uniTimetable.git
 cd uniTimetable
-git checkout rust-rewrite
 cargo build --release
 ```
 
