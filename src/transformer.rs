@@ -66,8 +66,9 @@ fn parse_location(raw: &str) -> Option<(String, String)> {
 /// Extract subject code from DESCRIPTION first line.
 /// e.g. "COMP9208-S1C-NE-CC, Lecture, 01" → "COMP9208"
 fn extract_subject_code(description: &str) -> Option<String> {
+    static SUBJECT_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = SUBJECT_RE.get_or_init(|| Regex::new(r"^([A-Z]{2,}\d{4,})").expect("valid regex"));
     let first_line = description.lines().next()?;
-    let re = Regex::new(r"^([A-Z]{2,}\d{4,})").ok()?;
     re.captures(first_line)?.get(1).map(|m| m.as_str().to_string())
 }
 
@@ -110,20 +111,22 @@ fn weekday_abbr(wd: Weekday) -> &'static str {
 // ── Grouping key ─────────────────────────────────────────────────────────────
 
 /// Key used to group events that should become a single RRULE entry.
-/// Two events are "the same recurring class" if they share summary, time-of-day,
-/// and duration.
+/// Two events are "the same recurring class" if they share summary, weekday,
+/// time-of-day, duration, location, and description signature.
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 struct GroupKey {
     summary: String,
+    weekday: Weekday,
     time_of_day: String, // "HHmmSS"
     duration_mins: i64,
+    location: String,
     description_sig: String, // first line of description (identifies subject+group)
 }
 
 // ── Main transform ────────────────────────────────────────────────────────────
 
 pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
-    // Group events by (summary, time, duration, description_signature)
+    // Group events by (summary, weekday, time, duration, location, description_signature)
     // to collapse weekly occurrences into RRULE.
     let mut groups: HashMap<GroupKey, Vec<RawEvent>> = HashMap::new();
 
@@ -131,6 +134,7 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
         let summary = event.get("SUMMARY").unwrap_or("").to_string();
         let dtstart = event.get("DTSTART").unwrap_or("").to_string();
         let dtend = event.get("DTEND").unwrap_or("").to_string();
+        let location = event.get("LOCATION").unwrap_or("-").to_string();
         let description = event.get("DESCRIPTION").unwrap_or("").to_string();
 
         if dtstart.is_empty() {
@@ -150,6 +154,7 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
         };
 
         let duration_mins = (end_dt - start_dt).num_minutes();
+        let weekday = start_dt.weekday();
         let time_of_day = start_dt.format("%H%M%S").to_string();
         let description_sig = description
             .lines()
@@ -159,8 +164,10 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
 
         let key = GroupKey {
             summary,
+            weekday,
             time_of_day,
             duration_mins,
+            location,
             description_sig,
         };
 
@@ -199,10 +206,10 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
         let clean_description = build_description(&description, room.as_deref());
 
         // ── Split into contiguous segments ────────────────────────────────────
-        // If the gap between two consecutive occurrences is > 14 days (i.e. not
-        // simply the normal weekly cadence), we start a new RRULE segment.
+        // If the gap between two consecutive occurrences is > 7 days (i.e. at
+        // least one week was skipped), we start a new RRULE segment.
         // This correctly handles mid-semester breaks (Easter, study break, etc.)
-        // where the timetable already exports separate VEVENT blocks.
+        // without scheduling classes during the break week.
         //
         // Each element of `segments` is a (start, end) pair of occurrence indices
         // into `occurrences`.
@@ -214,8 +221,8 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
             let curr_dt = parse_dt(occurrences[i].get("DTSTART").unwrap_or(""))?;
             let gap = (curr_dt - prev_dt).num_days();
 
-            if gap > 14 {
-                // Gap larger than a single missed week → new segment
+            if gap > 7 {
+                // Skipped at least one week → new segment
                 segments.push((seg_start, i - 1));
                 seg_start = i;
             }
@@ -334,5 +341,51 @@ mod tests {
     fn test_weekday_abbr() {
         assert_eq!(weekday_abbr(Weekday::Mon), "MO");
         assert_eq!(weekday_abbr(Weekday::Fri), "FR");
+    }
+
+    fn make_raw_event(dtstart: &str, dtend: &str) -> RawEvent {
+        let mut properties = HashMap::new();
+        properties.insert("SUMMARY".to_string(), "COMP9208 Lecture".to_string());
+        properties.insert("DTSTART".to_string(), dtstart.to_string());
+        properties.insert("DTEND".to_string(), dtend.to_string());
+        properties.insert(
+            "DESCRIPTION".to_string(),
+            "COMP9208-S1C-NE-CC, Lecture, 01\nArtificial Intelligence".to_string(),
+        );
+        properties.insert(
+            "LOCATION".to_string(),
+            "H70.01.1040.Belinda Hutchinson Building.BHB Lecture Theatre 1040".to_string(),
+        );
+        RawEvent { properties }
+    }
+
+    #[test]
+    fn test_different_weekdays_not_merged() {
+        // Same course on Tuesday (2026-03-03) and Thursday (2026-03-05)
+        let raw = vec![
+            make_raw_event("20260303T100000", "20260303T120000"),
+            make_raw_event("20260305T100000", "20260305T120000"),
+        ];
+        let out = transform(raw).unwrap();
+        assert_eq!(out.len(), 2);
+        assert!(out[0].rrule_until.is_none());
+        assert!(out[1].rrule_until.is_none());
+    }
+
+    #[test]
+    fn test_one_week_break_splits_segments() {
+        // Week 1 (Mar 5), Week 2 (Mar 12), skip Mar 19, Week 4 (Mar 26), Week 5 (Apr 2)
+        let raw = vec![
+            make_raw_event("20260305T100000", "20260305T120000"),
+            make_raw_event("20260312T100000", "20260312T120000"),
+            make_raw_event("20260326T100000", "20260326T120000"),
+            make_raw_event("20260402T100000", "20260402T120000"),
+        ];
+        let out = transform(raw).unwrap();
+        assert_eq!(out.len(), 2);
+        assert!(out[0].rrule_until.is_some());
+        assert!(out[1].rrule_until.is_some());
+        assert_eq!(out[0].dtstart, "20260305T100000");
+        assert_eq!(out[1].dtstart, "20260326T100000");
     }
 }
