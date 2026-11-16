@@ -27,14 +27,28 @@ fn unfold(input: &str) -> String {
     crlf_folded.replace("\n ", "").replace("\n\t", "")
 }
 
-/// Unescape ICS text values (\\n → \n, \\, → ,, etc.)
+/// Unescape ICS text values (\n → newline, \, → ,, \; → ;, \\ → \) in a single pass.
 fn unescape(value: &str) -> String {
-    value
-        .replace("\\n", "\n")
-        .replace("\\N", "\n")
-        .replace("\\,", ",")
-        .replace("\\;", ";")
-        .replace("\\\\", "\\")
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') | Some('N') => out.push('\n'),
+                Some(',') => out.push(','),
+                Some(';') => out.push(';'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Split a property line into (name_with_params, value).
@@ -74,7 +88,7 @@ pub fn parse_ics(raw: &str) -> Result<Vec<RawEvent>> {
             }
             "END:VEVENT" => {
                 if in_event {
-                    events.push(RawEvent { properties: current.clone() });
+                    events.push(RawEvent { properties: std::mem::take(&mut current) });
                     in_event = false;
                 }
             }
@@ -117,6 +131,24 @@ mod tests {
     #[test]
     fn test_unescape() {
         assert_eq!(unescape("Hello\\nWorld"), "Hello\nWorld");
-        assert_eq!(unescape("A\\,B"), "A,B");
+        assert_eq!(unescape("A\\,B\\;C"), "A,B;C");
+        assert_eq!(unescape("\\\\n"), "\\n");
+        assert_eq!(unescape("A\\\\B"), "A\\B");
+    }
+
+    #[test]
+    fn test_parse_ics_basic() {
+        let raw = "\
+BEGIN:VCALENDAR\r\n\
+BEGIN:VEVENT\r\n\
+DTSTART;TZID=Australia/Sydney:20260226T170000\r\n\
+SUMMARY:COMP9208\\, Lecture\r\n\
+DESCRIPTION:Line1\\n\r\n Line2\r\n\
+END:VEVENT\r\n\
+END:VCALENDAR\r\n";
+        let events = parse_ics(raw).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].get("SUMMARY"), Some("COMP9208, Lecture"));
+        assert_eq!(events[0].get("DESCRIPTION"), Some("Line1\nLine2"));
     }
 }
