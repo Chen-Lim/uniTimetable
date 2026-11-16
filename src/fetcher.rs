@@ -1,5 +1,5 @@
-/// fetcher.rs
-/// Downloads the raw ICS content from a USyd timetable subscription URL.
+//! fetcher.rs
+//! Downloads the raw ICS content from a USyd timetable subscription URL.
 
 use anyhow::{Result, bail, Context};
 

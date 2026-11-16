@@ -1,6 +1,6 @@
-/// writer.rs
-/// Serialises a list of `OutputEvent`s into a well-formed ICS (iCalendar) string
-/// and writes it to the specified path.
+//! writer.rs
+//! Serialises a list of `OutputEvent`s into a well-formed ICS (iCalendar) string
+//! and writes it to the specified path.
 
 use std::fs;
 use std::path::Path;

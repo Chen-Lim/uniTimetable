@@ -1,11 +1,11 @@
-/// transformer.rs
-/// Transforms raw parsed events into clean, restructured `OutputEvent`s.
-///
-/// Key responsibilities:
-/// 1. Parse and clean SUMMARY → "SubjectCode, ActivityType"
-/// 2. Parse LOCATION dot-notation → human-readable building + room
-/// 3. Group identical weekly events into RRULE recurrences
-/// 4. Produce single-occurrence events for one-offs
+//! transformer.rs
+//! Transforms raw parsed events into clean, restructured `OutputEvent`s.
+//!
+//! Key responsibilities:
+//! 1. Parse and clean SUMMARY → "SubjectCode, ActivityType"
+//! 2. Parse LOCATION dot-notation → human-readable building + room
+//! 3. Group identical weekly events into RRULE recurrences
+//! 4. Produce single-occurrence events for one-offs
 
 use std::collections::HashMap;
 use anyhow::{Result, Context};

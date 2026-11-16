@@ -1,10 +1,10 @@
-/// main.rs
-/// iScheduler – USyd timetable iCal restructurer
-///
-/// Usage:
-///   ischeduler --url "https://timetable.sydney.edu.au/even/rest/calendar/ical/<key>"
-///   ischeduler --url "..." --output my_timetable.ics
-///   ischeduler --file raw_timetable.ics           # process a local file instead
+//! main.rs
+//! iScheduler – USyd timetable iCal restructurer
+//!
+//! Usage:
+//!   ischeduler --url "https://timetable.sydney.edu.au/even/rest/calendar/ical/<key>"
+//!   ischeduler --url "..." --output my_timetable.ics
+//!   ischeduler --file raw_timetable.ics           # process a local file instead
 
 mod fetcher;
 mod parser;

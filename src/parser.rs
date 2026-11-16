@@ -1,6 +1,6 @@
-/// parser.rs
-/// Parses a raw ICS string into a list of structured `RawEvent` maps.
-/// Handles RFC 5545 line folding (lines starting with whitespace are continuations).
+//! parser.rs
+//! Parses a raw ICS string into a list of structured `RawEvent` maps.
+//! Handles RFC 5545 line folding (lines starting with whitespace are continuations).
 
 use std::collections::HashMap;
 use anyhow::{Result, bail};
