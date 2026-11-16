@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn test_unfold() {
         let folded = "DESCRIPTION:Hello\r\n World";
-        assert_eq!(unfold(folded), "DESCRIPTION:Hello World");
+        assert_eq!(unfold(folded), "DESCRIPTION:HelloWorld");
     }
 
     #[test]
