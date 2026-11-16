@@ -1,5 +1,5 @@
-/// fetcher.rs
-/// Downloads the raw ICS content from a USyd timetable subscription URL.
+//! fetcher.rs
+//! Downloads the raw ICS content from a USyd timetable subscription URL.
 
 use anyhow::{Result, bail, Context};
 
@@ -61,15 +61,20 @@ pub fn fetch_ical(url: &str) -> Result<String> {
 }
 
 fn validate_url(url: &str) -> Result<()> {
-    if url.trim().is_empty() {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
         bail!("URL cannot be empty.");
     }
 
-    if !url.starts_with("https://") && !url.starts_with("http://") {
-        bail!("URL must start with https:// or http://");
-    }
+    let rest = trimmed
+        .strip_prefix("https://")
+        .ok_or_else(|| anyhow::anyhow!("URL must start with https://"))?;
 
-    if !url.contains(EXPECTED_HOST) {
+    // Extract authority (host[:port]) before path, query, or fragment
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.split(':').next().unwrap_or("");
+
+    if !host.eq_ignore_ascii_case(EXPECTED_HOST) {
         bail!(
             "URL does not appear to be a USyd timetable link.\n\
              Expected format: https://{}/even/rest/calendar/ical/<your-personal-key>",
@@ -94,6 +99,13 @@ mod tests {
     fn test_validate_url_wrong_host() {
         let url = "https://evil.example.com/ical";
         assert!(validate_url(url).is_err());
+    }
+
+    #[test]
+    fn test_validate_url_bypass_attempts() {
+        assert!(validate_url("https://evil.com/?q=timetable.sydney.edu.au").is_err());
+        assert!(validate_url("https://evil.timetable.sydney.edu.au/ical").is_err());
+        assert!(validate_url("http://timetable.sydney.edu.au/even/rest/calendar/ical/abc").is_err());
     }
 
     #[test]

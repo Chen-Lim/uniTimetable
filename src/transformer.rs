@@ -1,15 +1,15 @@
-/// transformer.rs
-/// Transforms raw parsed events into clean, restructured `OutputEvent`s.
-///
-/// Key responsibilities:
-/// 1. Parse and clean SUMMARY → "SubjectCode, ActivityType"
-/// 2. Parse LOCATION dot-notation → human-readable building + room
-/// 3. Group identical weekly events into RRULE recurrences
-/// 4. Produce single-occurrence events for one-offs
+//! transformer.rs
+//! Transforms raw parsed events into clean, restructured `OutputEvent`s.
+//!
+//! Key responsibilities:
+//! 1. Parse and clean SUMMARY → "SubjectCode, ActivityType"
+//! 2. Parse LOCATION dot-notation → human-readable building + room
+//! 3. Group identical weekly events into RRULE recurrences
+//! 4. Produce single-occurrence events for one-offs
 
 use std::collections::HashMap;
 use anyhow::{Result, Context};
-use chrono::{NaiveDateTime, Duration, Datelike, Weekday};
+use chrono::{NaiveDateTime, Duration, Datelike, Weekday, TimeZone, Utc};
 use chrono_tz::Australia::Sydney;
 use regex::Regex;
 use uuid::Uuid;
@@ -67,8 +67,9 @@ fn parse_location(raw: &str) -> Option<(String, String)> {
 /// Extract subject code from DESCRIPTION first line.
 /// e.g. "COMP9208-S1C-NE-CC, Lecture, 01" → "COMP9208"
 fn extract_subject_code(description: &str) -> Option<String> {
+    static SUBJECT_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = SUBJECT_RE.get_or_init(|| Regex::new(r"^([A-Z]{2,}\d{4,})").expect("valid regex"));
     let first_line = description.lines().next()?;
-    let re = Regex::new(r"^([A-Z]{2,}\d{4,})").ok()?;
     re.captures(first_line)?.get(1).map(|m| m.as_str().to_string())
 }
 
@@ -96,6 +97,15 @@ fn format_dt(dt: &NaiveDateTime) -> String {
     dt.format("%Y%m%dT%H%M%S").to_string()
 }
 
+/// Convert a Sydney local NaiveDateTime to UTC and format with trailing `Z`
+/// as required by RFC 5545 §3.3.10 when DTSTART uses TZID.
+fn format_until_utc(dt: &NaiveDateTime) -> String {
+    match Sydney.from_local_datetime(dt).earliest() {
+        Some(local_dt) => local_dt.with_timezone(&Utc).format("%Y%m%dT%H%M%SZ").to_string(),
+        None => format!("{}Z", format_dt(dt)),
+    }
+}
+
 fn weekday_abbr(wd: Weekday) -> &'static str {
     match wd {
         Weekday::Mon => "MO",
@@ -111,20 +121,22 @@ fn weekday_abbr(wd: Weekday) -> &'static str {
 // ── Grouping key ─────────────────────────────────────────────────────────────
 
 /// Key used to group events that should become a single RRULE entry.
-/// Two events are "the same recurring class" if they share summary, time-of-day,
-/// and duration.
+/// Two events are "the same recurring class" if they share summary, weekday,
+/// time-of-day, duration, location, and description signature.
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 struct GroupKey {
     summary: String,
+    weekday: Weekday,
     time_of_day: String, // "HHmmSS"
     duration_mins: i64,
+    location: String,
     description_sig: String, // first line of description (identifies subject+group)
 }
 
 // ── Main transform ────────────────────────────────────────────────────────────
 
 pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
-    // Group events by (summary, time, duration, description_signature)
+    // Group events by (summary, weekday, time, duration, location, description_signature)
     // to collapse weekly occurrences into RRULE.
     let mut groups: HashMap<GroupKey, Vec<RawEvent>> = HashMap::new();
 
@@ -132,6 +144,7 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
         let summary = event.get("SUMMARY").unwrap_or("").to_string();
         let dtstart = event.get("DTSTART").unwrap_or("").to_string();
         let dtend = event.get("DTEND").unwrap_or("").to_string();
+        let location = event.get("LOCATION").unwrap_or("-").to_string();
         let description = event.get("DESCRIPTION").unwrap_or("").to_string();
 
         if dtstart.is_empty() {
@@ -151,6 +164,7 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
         };
 
         let duration_mins = (end_dt - start_dt).num_minutes();
+        let weekday = start_dt.weekday();
         let time_of_day = start_dt.format("%H%M%S").to_string();
         let description_sig = description
             .lines()
@@ -160,8 +174,10 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
 
         let key = GroupKey {
             summary,
+            weekday,
             time_of_day,
             duration_mins,
+            location,
             description_sig,
         };
 
@@ -177,16 +193,10 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
         // Use the first occurrence for shared metadata
         let first = &occurrences[0];
         let dtstart_str = first.get("DTSTART").unwrap_or("");
-        let dtend_str   = first.get("DTEND").unwrap_or("");
         let description = first.get("DESCRIPTION").unwrap_or("").to_string();
         let raw_location = first.get("LOCATION").unwrap_or("-").to_string();
 
-        let first_start = parse_dt(dtstart_str)?;
-        let first_end = if dtend_str.is_empty() {
-            first_start + Duration::minutes(key.duration_mins)
-        } else {
-            parse_dt(dtend_str).unwrap_or(first_start + Duration::minutes(key.duration_mins))
-        };
+        let _first_start = parse_dt(dtstart_str)?;
 
         // Parse location once — shared across all segments
         let (location, room) = match parse_location(&raw_location) {
@@ -206,10 +216,10 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
         let clean_description = build_description(&description, room.as_deref());
 
         // ── Split into contiguous segments ────────────────────────────────────
-        // If the gap between two consecutive occurrences is > 14 days (i.e. not
-        // simply the normal weekly cadence), we start a new RRULE segment.
+        // If the gap between two consecutive occurrences is > 7 days (i.e. at
+        // least one week was skipped), we start a new RRULE segment.
         // This correctly handles mid-semester breaks (Easter, study break, etc.)
-        // where the timetable already exports separate VEVENT blocks.
+        // without scheduling classes during the break week.
         //
         // Each element of `segments` is a (start, end) pair of occurrence indices
         // into `occurrences`.
@@ -221,8 +231,8 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
             let curr_dt = parse_dt(occurrences[i].get("DTSTART").unwrap_or(""))?;
             let gap = (curr_dt - prev_dt).num_days();
 
-            if gap > 14 {
-                // Gap larger than a single missed week → new segment
+            if gap > 7 {
+                // Skipped at least one week → new segment
                 segments.push((seg_start, i - 1));
                 seg_start = i;
             }
@@ -251,7 +261,7 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
 
             // Only emit RRULE when there are multiple occurrences in the segment
             let (rrule_until, byday_field) = if count > 1 {
-                (Some(format_dt(&seg_until_dt)), Some(byday))
+                (Some(format_until_utc(&seg_until_dt)), Some(byday))
             } else {
                 (None, None)
             };
@@ -341,5 +351,64 @@ mod tests {
     fn test_weekday_abbr() {
         assert_eq!(weekday_abbr(Weekday::Mon), "MO");
         assert_eq!(weekday_abbr(Weekday::Fri), "FR");
+    }
+
+    fn make_raw_event(dtstart: &str, dtend: &str) -> RawEvent {
+        let mut properties = HashMap::new();
+        properties.insert("SUMMARY".to_string(), "COMP9208 Lecture".to_string());
+        properties.insert("DTSTART".to_string(), dtstart.to_string());
+        properties.insert("DTEND".to_string(), dtend.to_string());
+        properties.insert(
+            "DESCRIPTION".to_string(),
+            "COMP9208-S1C-NE-CC, Lecture, 01\nArtificial Intelligence".to_string(),
+        );
+        properties.insert(
+            "LOCATION".to_string(),
+            "H70.01.1040.Belinda Hutchinson Building.BHB Lecture Theatre 1040".to_string(),
+        );
+        RawEvent { properties }
+    }
+
+    #[test]
+    fn test_different_weekdays_not_merged() {
+        // Same course on Tuesday (2026-03-03) and Thursday (2026-03-05)
+        let raw = vec![
+            make_raw_event("20260303T100000", "20260303T120000"),
+            make_raw_event("20260305T100000", "20260305T120000"),
+        ];
+        let out = transform(raw).unwrap();
+        assert_eq!(out.len(), 2);
+        assert!(out[0].rrule_until.is_none());
+        assert!(out[1].rrule_until.is_none());
+    }
+
+    #[test]
+    fn test_one_week_break_splits_segments() {
+        // Week 1 (Mar 5), Week 2 (Mar 12), skip Mar 19, Week 4 (Mar 26), Week 5 (Apr 2)
+        let raw = vec![
+            make_raw_event("20260305T100000", "20260305T120000"),
+            make_raw_event("20260312T100000", "20260312T120000"),
+            make_raw_event("20260326T100000", "20260326T120000"),
+            make_raw_event("20260402T100000", "20260402T120000"),
+        ];
+        let out = transform(raw).unwrap();
+        assert_eq!(out.len(), 2);
+        assert!(out[0].rrule_until.is_some());
+        assert!(out[1].rrule_until.is_some());
+        assert_eq!(out[0].dtstart, "20260305T100000");
+        assert_eq!(out[1].dtstart, "20260326T100000");
+        assert_eq!(out[0].rrule_until.as_deref(), Some("20260311T230000Z"));
+        assert_eq!(out[1].rrule_until.as_deref(), Some("20260401T230000Z"));
+    }
+
+    #[test]
+    fn test_until_utc_aedt_and_aest() {
+        // AEDT (UTC+11) in March
+        let aedt = parse_dt("20260312T100000").unwrap();
+        assert_eq!(format_until_utc(&aedt), "20260311T230000Z");
+
+        // AEST (UTC+10) in May
+        let aest = parse_dt("20260528T170000").unwrap();
+        assert_eq!(format_until_utc(&aest), "20260528T070000Z");
     }
 }

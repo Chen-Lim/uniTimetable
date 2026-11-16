@@ -1,10 +1,10 @@
-/// main.rs
-/// iScheduler – USyd timetable iCal restructurer
-///
-/// Usage:
-///   ischeduler --url "https://timetable.sydney.edu.au/even/rest/calendar/ical/<key>"
-///   ischeduler --url "..." --output my_timetable.ics
-///   ischeduler --file raw_timetable.ics           # process a local file instead
+//! main.rs
+//! iScheduler – USyd timetable iCal restructurer
+//!
+//! Usage:
+//!   ischeduler --url "https://timetable.sydney.edu.au/even/rest/calendar/ical/<key>"
+//!   ischeduler --url "..." --output my_timetable.ics
+//!   ischeduler --file raw_timetable.ics           # process a local file instead
 
 mod fetcher;
 mod parser;
@@ -110,4 +110,55 @@ fn run() -> Result<()> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_end_to_end_pipeline() {
+        let raw_ics = "\
+BEGIN:VCALENDAR\r\n\
+VERSION:2.0\r\n\
+BEGIN:VEVENT\r\n\
+DTSTART;TZID=Australia/Sydney:20260305T170000\r\n\
+DTEND;TZID=Australia/Sydney:20260305T200000\r\n\
+SUMMARY:COMP9208\\, Lecture\r\n\
+DESCRIPTION:COMP9208-S1C-NE-CC\\, Lecture\\, 01\\nArtificial Intelligence\r\n\
+LOCATION:H70.01.1040.Belinda Hutchinson Building.BHB Lecture Theatre 1040\r\n\
+END:VEVENT\r\n\
+BEGIN:VEVENT\r\n\
+DTSTART;TZID=Australia/Sydney:20260312T170000\r\n\
+DTEND;TZID=Australia/Sydney:20260312T200000\r\n\
+SUMMARY:COMP9208\\, Lecture\r\n\
+DESCRIPTION:COMP9208-S1C-NE-CC\\, Lecture\\, 01\\nArtificial Intelligence\r\n\
+LOCATION:H70.01.1040.Belinda Hutchinson Building.BHB Lecture Theatre 1040\r\n\
+END:VEVENT\r\n\
+BEGIN:VEVENT\r\n\
+DTSTART;TZID=Australia/Sydney:20260528T100000\r\n\
+DTEND;TZID=Australia/Sydney:20260528T120000\r\n\
+SUMMARY:COMP9208\\, Presentation\r\n\
+DESCRIPTION:COMP9208-S1C-NE-CC\\, Presentation\\, 01\\nFinal Demo\r\n\
+LOCATION:-\r\n\
+END:VEVENT\r\n\
+END:VCALENDAR\r\n";
+
+        let raw_events = parser::parse_ics(raw_ics).unwrap();
+        assert_eq!(raw_events.len(), 3);
+
+        let output_events = transformer::transform(raw_events).unwrap();
+        assert_eq!(output_events.len(), 2);
+
+        let ics_out = writer::build_ics(&output_events);
+        let reparsed = parser::parse_ics(&ics_out).unwrap();
+        assert_eq!(reparsed.len(), 2);
+        assert_eq!(reparsed[0].get("SUMMARY"), Some("COMP9208-Lecture"));
+        assert_eq!(
+            reparsed[0].get("RRULE"),
+            Some("FREQ=WEEKLY;BYDAY=TH;UNTIL=20260312T060000Z")
+        );
+        assert_eq!(reparsed[1].get("SUMMARY"), Some("COMP9208-Presentation"));
+        assert_eq!(reparsed[1].get("RRULE"), None);
+    }
 }
