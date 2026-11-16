@@ -10,7 +10,6 @@
 use std::collections::HashMap;
 use anyhow::{Result, Context};
 use chrono::{NaiveDateTime, Duration, Datelike, Weekday};
-use chrono_tz::Australia::Sydney;
 use regex::Regex;
 use uuid::Uuid;
 
@@ -177,16 +176,10 @@ pub fn transform(raw_events: Vec<RawEvent>) -> Result<Vec<OutputEvent>> {
         // Use the first occurrence for shared metadata
         let first = &occurrences[0];
         let dtstart_str = first.get("DTSTART").unwrap_or("");
-        let dtend_str   = first.get("DTEND").unwrap_or("");
         let description = first.get("DESCRIPTION").unwrap_or("").to_string();
         let raw_location = first.get("LOCATION").unwrap_or("-").to_string();
 
-        let first_start = parse_dt(dtstart_str)?;
-        let first_end = if dtend_str.is_empty() {
-            first_start + Duration::minutes(key.duration_mins)
-        } else {
-            parse_dt(dtend_str).unwrap_or(first_start + Duration::minutes(key.duration_mins))
-        };
+        let _first_start = parse_dt(dtstart_str)?;
 
         // Parse location once — shared across all segments
         let (location, room) = match parse_location(&raw_location) {
